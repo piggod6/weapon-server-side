@@ -29,5 +29,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: emperor-time-server-only
-          path: build/libs/emperor-time-server-1.1.0.jar
+          path: path: build/libs/emperor-time-1.0.0.jar
           if-no-files-found: error
