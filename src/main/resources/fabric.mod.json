@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "godcore",
+  "version": "${version}",
+  "name": "Emperor Time Server",
+  "description": "Server-only sculk crater and toggleable flight powers using vanilla items.",
+  "authors": ["Codex"],
+  "license": "All-Rights-Reserved",
+  "environment": "server",
+  "entrypoints": { "main": ["com.example.godcore.GodCoreMod"] },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
