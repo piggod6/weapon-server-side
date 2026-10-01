@@ -3,8 +3,12 @@ package com.example.godcore;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
+import java.util.UUID;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -16,6 +20,7 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionResult;
@@ -32,6 +37,7 @@ public final class GodCoreMod implements ModInitializer {
     private static final int CRATER_RADIUS = 100;
     private static final int CRATER_DEPTH = 54;
     private static final Queue<CraterJob> CRATER_JOBS = new ArrayDeque<>();
+    private static final Map<UUID, CaboomCharge> CABOOM_CHARGES = new HashMap<>();
 
     @Override
     public void onInitialize() {
@@ -44,8 +50,15 @@ public final class GodCoreMod implements ModInitializer {
                 Vec3 point = hit.getType() == HitResult.Type.BLOCK
                         ? hit.getLocation()
                         : player.getEyePosition().add(player.getLookAngle().scale(80.0));
-                startCrater(serverLevel, BlockPos.containing(point), player);
-                player.displayClientMessage(Component.literal("EMPEROR TIME"), true);
+                if (CABOOM_CHARGES.containsKey(player.getUUID())) {
+                    player.displayClientMessage(Component.literal("Caboom is already charging!"), true);
+                    return InteractionResult.SUCCESS;
+                }
+                BlockPos center = BlockPos.containing(point);
+                CABOOM_CHARGES.put(player.getUUID(), new CaboomCharge(serverLevel, center, 60));
+                player.displayClientMessage(Component.literal("CABOOM CHARGING — 3 seconds!"), true);
+                serverLevel.playSound(null, center, SoundEvents.WARDEN_SONIC_BOOM,
+                        SoundSource.PLAYERS, 2.0F, 1.8F);
                 return InteractionResult.SUCCESS;
             }
 
@@ -58,6 +71,27 @@ public final class GodCoreMod implements ModInitializer {
         });
 
         ServerTickEvents.END_SERVER_TICK.register(server -> {
+            Iterator<Map.Entry<UUID, CaboomCharge>> charges = CABOOM_CHARGES.entrySet().iterator();
+            while (charges.hasNext()) {
+                Map.Entry<UUID, CaboomCharge> entry = charges.next();
+                CaboomCharge charge = entry.getValue();
+                ServerPlayer caster = server.getPlayerList().getPlayer(entry.getKey());
+                if (caster == null || !caster.isAlive()) {
+                    charges.remove();
+                    continue;
+                }
+
+                charge.ticksRemaining--;
+                if (charge.ticksRemaining <= 0) {
+                    eliminatePlayersInBlast(charge.level, charge.center, caster);
+                    startCrater(charge.level, charge.center, caster);
+                    caster.displayClientMessage(Component.literal("CABOOM!"), true);
+                    charges.remove();
+                } else if (charge.ticksRemaining % 5 == 0) {
+                    showChargeEffect(charge, caster);
+                }
+            }
+
             CraterJob job = CRATER_JOBS.peek();
             if (job != null && job.process(300)) CRATER_JOBS.remove();
         });
@@ -83,6 +117,45 @@ public final class GodCoreMod implements ModInitializer {
             player.displayClientMessage(Component.literal("Flight ON"), true);
         }
         player.onUpdateAbilities();
+    }
+
+    private static void showChargeEffect(CaboomCharge charge, ServerPlayer caster) {
+        int seconds = Math.max(1, (charge.ticksRemaining + 19) / 20);
+        caster.displayClientMessage(Component.literal("CABOOM CHARGING — " + seconds + "..."), true);
+        double progress = 1.0 - charge.ticksRemaining / 60.0;
+        double radius = 3.0 + progress * 12.0;
+        double y = charge.center.getY() + 1.0;
+        for (int i = 0; i < 32; i++) {
+            double angle = (Math.PI * 2.0 * i) / 32.0;
+            double x = charge.center.getX() + 0.5 + Math.cos(angle) * radius;
+            double z = charge.center.getZ() + 0.5 + Math.sin(angle) * radius;
+            charge.level.sendParticles(ParticleTypes.SCULK_SOUL, x, y, z, 1, 0, 0, 0, 0);
+        }
+        charge.level.sendParticles(ParticleTypes.SONIC_BOOM,
+                charge.center.getX() + 0.5, y, charge.center.getZ() + 0.5, 1, 0, 0, 0, 0);
+    }
+
+    private static void eliminatePlayersInBlast(ServerLevel level, BlockPos center, ServerPlayer caster) {
+        double radiusSquared = (double) CRATER_RADIUS * CRATER_RADIUS;
+        for (ServerPlayer target : level.players()) {
+            if (target == caster) continue;
+            if (target.distanceToSqr(center.getX() + 0.5, center.getY() + 0.5, center.getZ() + 0.5)
+                    <= radiusSquared) {
+                target.kill();
+            }
+        }
+    }
+
+    private static final class CaboomCharge {
+        private final ServerLevel level;
+        private final BlockPos center;
+        private int ticksRemaining;
+
+        private CaboomCharge(ServerLevel level, BlockPos center, int ticksRemaining) {
+            this.level = level;
+            this.center = center;
+            this.ticksRemaining = ticksRemaining;
+        }
     }
 
     private static void startCrater(ServerLevel level, BlockPos center, Player caster) {
@@ -156,9 +229,7 @@ public final class GodCoreMod implements ModInitializer {
 
             for (int y = floor + 1; y <= column.surface() && y < level.getMaxY(); y++) {
                 pos.set(x, y, z);
-                if (!level.getBlockState(pos).is(Blocks.BEDROCK)) {
-                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
-                }
+                if (!level.getBlockState(pos).is(Blocks.BEDROCK)) level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
             }
 
             pos.set(x, floor, z);
@@ -188,9 +259,7 @@ public final class GodCoreMod implements ModInitializer {
 
             if (distance < 86 && Math.floorMod(hash >>> 37, 31) == 0) {
                 pos.set(x, floor + 1, z);
-                if (level.getBlockState(pos).isAir()) {
-                    level.setBlock(pos, Blocks.SOUL_FIRE.defaultBlockState(), 3);
-                }
+                if (level.getBlockState(pos).isAir()) level.setBlock(pos, Blocks.SOUL_FIRE.defaultBlockState(), 3);
             }
         }
     }
