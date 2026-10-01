@@ -14,20 +14,24 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.7.1'
+
       - name: Build mod JAR
         run: gradle --no-daemon build
+
       - name: Upload server-only JAR
         uses: actions/upload-artifact@v4
         with:
           name: emperor-time-server-only
-          path: path: build/libs/emperor-time-1.0.0.jar
+          path: build/libs/emperor-time-1.0.0.jar
           if-no-files-found: error
